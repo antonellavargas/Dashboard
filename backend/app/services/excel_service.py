@@ -8,6 +8,10 @@ from app.services.onedrive_service import obtener_excel_onedrive, estado_fuente_
 BASE_DIR = Path(__file__).resolve().parent.parent
 RUTA_EXCEL_LOCAL = BASE_DIR / "data" / "INVENTARIO GENERAL TI - ACTUAL.xlsx"
 
+_KPI_CACHE = {
+    "etag": None,
+    "data": None,
+}
 
 def _data_source() -> str:
     return os.getenv("DATA_SOURCE", "local").strip().lower()
@@ -53,6 +57,8 @@ def obtener_hoja(nombre_hoja):
 
 
 def obtener_kpis_principales():
+    global _KPI_CACHE
+
     hojas = {
         "laptops": "LAPTOPS",
         "celulares": "CELULARES",
@@ -68,6 +74,24 @@ def obtener_kpis_principales():
     total = 0
 
     try:
+        # Si usamos OneDrive/SharePoint, revisamos primero la versión del Excel.
+        if _data_source() == "onedrive":
+            estado = estado_fuente_onedrive()
+            etag_actual = estado.get("etag")
+
+            # Si el archivo no cambió, devolvemos los KPIs ya calculados.
+            if (
+                etag_actual
+                and _KPI_CACHE["etag"] == etag_actual
+                and _KPI_CACHE["data"] is not None
+            ):
+                return _KPI_CACHE["data"]
+
+        else:
+            etag_actual = None
+
+        # Solo llegamos aquí si es la primera consulta
+        # o si el Excel cambió.
         fuente = obtener_fuente_excel()
         libro = pd.ExcelFile(fuente)
 
@@ -75,20 +99,35 @@ def obtener_kpis_principales():
             try:
                 df = pd.read_excel(libro, sheet_name=hoja)
                 cantidad = len(df)
+
                 resultado[clave] = cantidad
                 total += cantidad
+
             except Exception as e:
                 resultado[clave] = 0
                 resultado[f"{clave}_error"] = str(e)
 
+        resultado["total"] = total
+
+        # Guardamos los KPIs calculados junto al eTag actual.
+        if _data_source() == "onedrive":
+            _KPI_CACHE = {
+                "etag": etag_actual,
+                "data": resultado.copy(),
+            }
+
+        return resultado
+
     except Exception as e:
         resultado["error_fuente"] = str(e)
+
         for clave in hojas:
             resultado[clave] = 0
 
-    resultado["total"] = total
-    return resultado
+        resultado["total"] = 0
 
+        return resultado
+    
 
 def obtener_estado_fuente():
     source = _data_source()
