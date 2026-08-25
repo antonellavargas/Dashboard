@@ -3,11 +3,21 @@ import unicodedata
 
 from app.services.excel_service import (
     obtener_hoja,
-    obtener_kpis_principales
+    obtener_kpis_principales,
+    obtener_etag_actual,
 )
 
 router = APIRouter()
 
+_PERFILES_CACHE = {
+    "etag": None,
+    "personas": {},
+    "laptops": {},
+    "celulares": {},
+    "chips": {},
+    "exchange": {},
+    "modem": {},
+}
 
 # =========================
 # DASHBOARD
@@ -146,13 +156,92 @@ def normalizar(texto):
 
     return texto.upper().strip()
 
+def _agrupar_por_usuario(registros, campo_usuario):
+    indice = {}
+
+    if isinstance(registros, dict):
+        return indice
+
+    for item in registros:
+        usuario = normalizar(item.get(campo_usuario, ""))
+
+        if not usuario:
+            continue
+
+        indice.setdefault(usuario, []).append(item)
+
+    return indice
+
+def _construir_cache_perfiles():
+    global _PERFILES_CACHE
+
+    etag_actual = obtener_etag_actual()
+
+    # Si tenemos la misma versión del Excel,
+    # reutilizamos los índices existentes.
+    if (
+        _PERFILES_CACHE["etag"] == etag_actual
+        and _PERFILES_CACHE["personas"]
+    ):
+        return
+
+    personas_data = obtener_hoja("DATA PERSONAL")
+    laptops_data = obtener_hoja("LAPTOPS")
+    celulares_data = obtener_hoja("CELULARES")
+    chips_data = obtener_hoja("ASIGNACIÓN CHIPS")
+    exchange_data = obtener_hoja("EXCHANGE")
+    modem_data = obtener_hoja("MODEM")
+
+    personas = {}
+
+    if not isinstance(personas_data, dict):
+        for persona in personas_data:
+            usuario = normalizar(
+                persona.get("USUARIO", "")
+            )
+
+            if usuario:
+                personas[usuario] = persona
+
+    _PERFILES_CACHE = {
+        "etag": etag_actual,
+        "personas": personas,
+
+        "laptops": _agrupar_por_usuario(
+            laptops_data,
+            "USUARIO ASIGNADO",
+        ),
+
+        "celulares": _agrupar_por_usuario(
+            celulares_data,
+            "USUARIO",
+        ),
+
+        "chips": _agrupar_por_usuario(
+            chips_data,
+            "USUARIO",
+        ),
+
+        "exchange": _agrupar_por_usuario(
+            exchange_data,
+            "USUARIO",
+        ),
+
+        "modem": _agrupar_por_usuario(
+            modem_data,
+            "USUARIO",
+        ),
+    }
 
 # =========================
 # BUSCADOR GLOBAL
 # =========================
 
 @router.get("/busqueda-global")
-def busqueda_global(q: str = Query("")):
+def busqueda_global(
+    q: str = Query(""),
+    limite: int = Query(30, ge=1, le=100),
+):
 
     if not q:
         return []
@@ -192,8 +281,11 @@ def busqueda_global(q: str = Query("")):
             if encontrado:
                 resultados.append({
                     "modulo": modulo,
-                    "datos": fila
+                    "datos": fila,
                 })
+
+                if len(resultados) >= limite:
+                    return resultados
 
     return resultados
 
@@ -208,26 +300,16 @@ def busqueda_personas(q: str = Query("")):
     if not q:
         return []
 
-    personas = obtener_hoja("DATA PERSONAL")
-
-    if isinstance(personas, dict):
-        return []
+    _construir_cache_perfiles()
 
     texto = normalizar(q)
 
     resultados = []
 
-    for persona in personas:
-
-        usuario = normalizar(
-            persona.get("USUARIO", "")
-        )
+    for usuario, persona in _PERFILES_CACHE["personas"].items():
 
         nombre = normalizar(
-            persona.get(
-                "NOMBRES Y APELLIDOS",
-                ""
-            )
+            persona.get("NOMBRES Y APELLIDOS", "")
         )
 
         if texto in usuario or texto in nombre:
@@ -236,8 +318,12 @@ def busqueda_personas(q: str = Query("")):
                 "usuario": persona.get("USUARIO"),
                 "nombre": persona.get("NOMBRES Y APELLIDOS"),
                 "cargo": persona.get("CARGO"),
-                "area": persona.get("ÁREA")
+                "area": persona.get("ÁREA"),
             })
+
+        # No necesitamos devolver 500 coincidencias.
+        if len(resultados) >= 20:
+            break
 
     return resultados
 
@@ -249,88 +335,38 @@ def busqueda_personas(q: str = Query("")):
 @router.get("/persona-completa/{usuario}")
 def persona_completa(usuario: str):
 
+    _construir_cache_perfiles()
+
     usuario_buscado = normalizar(usuario)
 
-    # DATA PERSONAL
-    personas = obtener_hoja("DATA PERSONAL")
-
-    if isinstance(personas, dict):
-        personas = []
-
-    persona = next(
-        (
-            p for p in personas
-            if normalizar(
-                p.get("USUARIO", "")
-            ) == usuario_buscado
-        ),
-        None
+    persona = _PERFILES_CACHE["personas"].get(
+        usuario_buscado
     )
 
-    # LAPTOPS
-    laptops_data = obtener_hoja("LAPTOPS")
-    if isinstance(laptops_data, dict):
-        laptops_data = []
+    laptops = _PERFILES_CACHE["laptops"].get(
+        usuario_buscado,
+        []
+    )
 
-    laptops = [
-        item
-        for item in laptops_data
-        if normalizar(
-            item.get("USUARIO ASIGNADO", "")
-        ) == usuario_buscado
-    ]
+    celulares = _PERFILES_CACHE["celulares"].get(
+        usuario_buscado,
+        []
+    )
 
-    # CELULARES
-    celulares_data = obtener_hoja("CELULARES")
-    if isinstance(celulares_data, dict):
-        celulares_data = []
+    chips = _PERFILES_CACHE["chips"].get(
+        usuario_buscado,
+        []
+    )
 
-    celulares = [
-        item
-        for item in celulares_data
-        if normalizar(
-            item.get("USUARIO", "")
-        ) == usuario_buscado
-    ]
+    exchange = _PERFILES_CACHE["exchange"].get(
+        usuario_buscado,
+        []
+    )
 
-    # CHIPS
-    chips_data = obtener_hoja("ASIGNACIÓN CHIPS")
-    if isinstance(chips_data, dict):
-        chips_data = []
-
-    chips = [
-        item
-        for item in chips_data
-        if normalizar(
-            item.get("USUARIO", "")
-        ) == usuario_buscado
-    ]
-
-    # EXCHANGE
-    exchange_data = obtener_hoja("EXCHANGE")
-    if isinstance(exchange_data, dict):
-        exchange_data = []
-
-    exchange = [
-        item
-        for item in exchange_data
-        if normalizar(
-            item.get("USUARIO", "")
-        ) == usuario_buscado
-    ]
-
-    # MODEM
-    modem_data = obtener_hoja("MODEM")
-    if isinstance(modem_data, dict):
-        modem_data = []
-
-    modem = [
-        item
-        for item in modem_data
-        if normalizar(
-            item.get("USUARIO", "")
-        ) == usuario_buscado
-    ]
+    modem = _PERFILES_CACHE["modem"].get(
+        usuario_buscado,
+        []
+    )
 
     return {
         "persona": persona,
@@ -345,5 +381,5 @@ def persona_completa(usuario: str):
         "celulares": celulares,
         "chips": chips,
         "exchange": exchange,
-        "modem": modem
+        "modem": modem,
     }

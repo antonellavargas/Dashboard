@@ -39,21 +39,68 @@ def obtener_fuente_excel():
         f"DATA_SOURCE='{source}' no es válido. Usa 'local' u 'onedrive'."
     )
 
+def _obtener_dataframe_hoja(nombre_hoja):
+    global _HOJAS_CACHE
+    global _KPI_CACHE
 
-def obtener_hoja(nombre_hoja):
-    try:
+    source = _data_source()
+
+    if source == "onedrive":
+        estado = estado_fuente_onedrive()
+        etag_actual = estado.get("etag")
+
+        # Si cambió el Excel, invalidamos todas las cachés.
+        if _HOJAS_CACHE["etag"] != etag_actual:
+            _HOJAS_CACHE = {
+                "etag": etag_actual,
+                "hojas": {},
+            }
+
+            _KPI_CACHE = {
+                "etag": None,
+                "data": None,
+            }
+
+        # Si la hoja ya fue procesada para esta versión,
+        # la devolvemos directamente.
+        if nombre_hoja in _HOJAS_CACHE["hojas"]:
+            return _HOJAS_CACHE["hojas"][nombre_hoja]
+
+        # Si no está cacheada, la leemos una sola vez.
         df = pd.read_excel(
             obtener_fuente_excel(),
             sheet_name=nombre_hoja,
         )
+
         df = df.fillna("")
+
+        _HOJAS_CACHE["hojas"][nombre_hoja] = df
+
+        return df
+
+    # Modo local
+    df = pd.read_excel(
+        obtener_fuente_excel(),
+        sheet_name=nombre_hoja,
+    )
+
+    return df.fillna("")
+
+def obtener_hoja(nombre_hoja):
+    try:
+        df = _obtener_dataframe_hoja(nombre_hoja)
+
         return df.to_dict(orient="records")
 
     except ValueError as e:
-        return {"error": f"No se encontró la hoja '{nombre_hoja}': {str(e)}"}
+        return {
+            "error": f"No se encontró la hoja '{nombre_hoja}': {str(e)}"
+        }
 
     except Exception as e:
-        return {"error": str(e)}
+        return {
+            "error": str(e)
+        }
 
 
 def obtener_kpis_principales():
@@ -74,12 +121,10 @@ def obtener_kpis_principales():
     total = 0
 
     try:
-        # Si usamos OneDrive/SharePoint, revisamos primero la versión del Excel.
         if _data_source() == "onedrive":
             estado = estado_fuente_onedrive()
             etag_actual = estado.get("etag")
 
-            # Si el archivo no cambió, devolvemos los KPIs ya calculados.
             if (
                 etag_actual
                 and _KPI_CACHE["etag"] == etag_actual
@@ -90,14 +135,10 @@ def obtener_kpis_principales():
         else:
             etag_actual = None
 
-        # Solo llegamos aquí si es la primera consulta
-        # o si el Excel cambió.
-        fuente = obtener_fuente_excel()
-        libro = pd.ExcelFile(fuente)
-
         for clave, hoja in hojas.items():
             try:
-                df = pd.read_excel(libro, sheet_name=hoja)
+                df = _obtener_dataframe_hoja(hoja)
+
                 cantidad = len(df)
 
                 resultado[clave] = cantidad
@@ -109,7 +150,6 @@ def obtener_kpis_principales():
 
         resultado["total"] = total
 
-        # Guardamos los KPIs calculados junto al eTag actual.
         if _data_source() == "onedrive":
             _KPI_CACHE = {
                 "etag": etag_actual,
@@ -143,3 +183,13 @@ def obtener_estado_fuente():
         "archivo": RUTA_EXCEL_LOCAL.name,
         "existe": RUTA_EXCEL_LOCAL.exists(),
     }
+
+def obtener_etag_actual():
+    if _data_source() != "onedrive":
+        return None
+
+    try:
+        estado = estado_fuente_onedrive()
+        return estado.get("etag")
+    except Exception:
+        return None
