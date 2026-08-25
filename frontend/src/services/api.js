@@ -4,7 +4,7 @@ const baseURL = (import.meta.env.VITE_API_URL || "/api").replace(/\/$/, "");
 
 const api = axios.create({
   baseURL,
-  timeout: 30000,
+  timeout: 120000,
 });
 
 export default api;
