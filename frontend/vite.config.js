@@ -3,8 +3,9 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
-  // Rutas relativas para que el build funcione dentro de un repositorio GitHub Pages.
-  base: './',
+  // GitHub Pages:
+  // https://TU-USUARIO.github.io/Dashboard/
+  base: '/Dashboard/',
 
   plugins: [
     react(),
