@@ -13,6 +13,12 @@ _KPI_CACHE = {
     "data": None,
 }
 
+_HOJAS_CACHE = {
+    "etag": None,
+    "hojas": {},
+}
+
+
 def _data_source() -> str:
     return os.getenv("DATA_SOURCE", "local").strip().lower()
 
