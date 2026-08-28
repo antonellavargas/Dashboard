@@ -41,6 +41,7 @@ function App() {
             />
 
             <Route path="/dashboard-general" element={<DashboardGeneral />} />
+            <Route path="/data-personal" element={<DataPersonal />} />
             <Route path="/celulares" element={<Celulares />} />
             <Route path="/laptops" element={<Laptops />} />
             <Route path="/equipos-reportados" element={<EquiposReportados />} />
@@ -52,7 +53,6 @@ function App() {
             <Route path="/trf" element={<Trf />} />
             <Route path="/datacenter-si" element={<DatacenterSI />} />
             <Route path="/datacenter-ph" element={<DatacenterPH />} />
-            <Route path="/data-personal" element={<DataPersonal />} />
 
           </Routes>
 
